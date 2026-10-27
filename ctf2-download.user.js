@@ -260,7 +260,7 @@
   }
 
   function buildExpPy(opts) {
-    const { title, category, host, port, ssl, ssh, attachments } = opts;
+    const { title, category, host, port, ssl, ssh, attachments, arch } = opts;
     const bin = (attachments && attachments[0]) || '';
     const header = [
       '#!/usr/bin/env python3',
@@ -276,7 +276,7 @@
       'from pwn import *  # pyright: ignore[reportWildcardImportFromLibrary]',
       '',
       "context.log_level = 'debug'",
-      "context.arch = 'amd64'",
+      ...(arch ? ["context.arch = '" + arch + "'"] : []),
       '',
       "HOST = '" + host + "'",
       'PORT = ' + port,
@@ -361,6 +361,38 @@
         onerror: reject,
       });
     });
+  }
+
+  // 从 ELF 头字节解析架构（JS 侧），非 ELF / 未知架构返回 null
+  function elfArchFromBytes(u8) {
+    if (!u8 || u8.length < 20) return null;
+    if (!(u8[0] === 0x7f && u8[1] === 0x45 && u8[2] === 0x4c && u8[3] === 0x46)) return null;
+    const little = u8[5] === 1;
+    const machine = little ? (u8[18] | (u8[19] << 8)) : ((u8[18] << 8) | u8[19]);
+    return ({ 0x3e: 'amd64', 0x03: 'i386', 0x28: 'arm', 0xb7: 'aarch64', 0x08: 'mips' })[machine] || null;
+  }
+
+  // 读取（已下载到本地的）Blob/File 的前 64 字节探测架构；失败返回 null
+  async function probeArchFromBlob(blob) {
+    try {
+      if (!blob || typeof blob.slice !== 'function') return null;
+      const buf = await blob.slice(0, 64).arrayBuffer();
+      return elfArchFromBytes(new Uint8Array(buf));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 从已写入目录的本地文件读文件头探测；无 FS 或读失败返回 null
+  async function probeArchFromDir(dir, name) {
+    try {
+      if (!dir || !name) return null;
+      const fh = await dir.getFileHandle(name);
+      const file = await fh.getFile();
+      return await probeArchFromBlob(file);
+    } catch (e) {
+      return null;
+    }
   }
 
   // Firefox/无 FS：用 GM_download 落到默认下载目录下的相对子路径
@@ -460,6 +492,7 @@
       const relPrefix = `CTF2/${sanitize(category)}/${sanitize(title)}/`;
 
       let ok = 0, fail = 0;
+      let firstBlob = null, firstBlobName = null;
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         const name = fileName(f, i);
@@ -470,11 +503,13 @@
           if (targetDir) {
             const blob = await fetchBlob(url);
             await writeToDir(targetDir, name, blob);
+            if (i === 0 && !firstBlob) { firstBlob = blob; firstBlobName = name; }
           } else if (HAS_GM_DOWNLOAD) {
             await gmDownload(url, relPrefix + name);
           } else {
             const blob = await fetchBlob(url);
             anchorDownload(blob, NEED_FLAT ? flatName(category, title, name) : name);
+            if (i === 0 && !firstBlob) { firstBlob = blob; firstBlobName = name; }
           }
           ok++;
         } catch (e) {
@@ -519,7 +554,14 @@
               const ssh = (chosen.ssh_host && chosen.ssh_port)
                 ? { host: chosen.ssh_host, port: chosen.ssh_port, user: chosen.ssh_username || 'root', pass: chosen.ssh_password || '' }
                 : null;
-              const py = buildExpPy({ title, category, host: hp.host, port: hp.port, ssl, ssh, attachments: attachmentNames });
+              // 下载已完成，直接读本地文件头探测架构：优先用已下载的 blob，其次读回目录里的文件
+              let arch = null;
+              setStatus('探测附件架构…', 'info');
+              try {
+                if (firstBlob) arch = await probeArchFromBlob(firstBlob);
+                if (!arch && targetDir) arch = await probeArchFromDir(targetDir, firstBlobName || attachmentNames[0]);
+              } catch (e) { arch = null; }
+              const py = buildExpPy({ title, category, host: hp.host, port: hp.port, ssl, ssh, attachments: attachmentNames, arch });
               const expName = 'exp.py';
               if (targetDir) {
                 await writeToDir(targetDir, expName, new Blob([py], { type: 'text/x-python;charset=utf-8' }));
