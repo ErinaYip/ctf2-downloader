@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CTF² 一键下载题目附件
 // @namespace    https://ctf2.dasctf.com/
-// @version      1.6.0
+// @version      1.7.0
 // @description  在 CTF²(ctf2.dasctf.com) 练习页打开题目后，一键下载该题所有附件。Chrome/Edge 可选本地目录（File System Access API）；Firefox 退回默认下载目录的子文件夹。使用页面自带登录态，无需绕过反爬。
 // @author       you
 // @match        https://ctf2.dasctf.com/*
@@ -567,32 +567,99 @@
     if (NEED_FLAT) dirLabelEl.textContent = '目录：默认下载目录（Safari 不支持选目录，文件名加 分类_题目_ 前缀）';
   }
 
+  const UI_KEY = 'ctf2dl.ui';
+  function loadUIState() { try { return JSON.parse(localStorage.getItem(UI_KEY) || '{}'); } catch (e) { return {}; } }
+  function saveUIState(s) { try { localStorage.setItem(UI_KEY, JSON.stringify(s)); } catch (e) {} }
+
+  function applyCollapsed(box, collapsed) {
+    box.dataset.collapsed = collapsed ? '1' : '0';
+    const body = box.querySelector('#ctf2-dl-body');
+    const btn = box.querySelector('#ctf2-dl-collapse');
+    if (body) body.style.display = collapsed ? 'none' : '';
+    if (btn) btn.textContent = collapsed ? '+' : '−';
+    box.style.width = collapsed ? 'auto' : '262px';
+    // 收起时贴右侧边只留一个小标签
+    if (collapsed) { box.style.borderRadius = '12px 0 0 12px'; }
+  }
+
+  function dockRightMiddle(box) {
+    box.style.left = 'auto';
+    box.style.right = '0px';
+    box.style.top = '50%';
+    box.style.bottom = 'auto';
+    box.style.transform = 'translateY(-50%)';
+  }
+
+  function placeAt(box, left, top) {
+    box.style.right = 'auto';
+    box.style.transform = 'none';
+    box.style.bottom = 'auto';
+    const w = box.offsetWidth || 262;
+    const h = box.offsetHeight || 100;
+    left = Math.max(0, Math.min(left, window.innerWidth - w));
+    top = Math.max(0, Math.min(top, window.innerHeight - h));
+    box.style.left = left + 'px';
+    box.style.top = top + 'px';
+    return { left, top };
+  }
+
+  function makeDraggable(box, handle) {
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target.closest('#ctf2-dl-collapse,#ctf2-dl-close')) return;
+      const r = box.getBoundingClientRect();
+      const pos = placeAt(box, r.left, r.top);
+      dragging = true; sx = e.clientX; sy = e.clientY; ox = pos.left; oy = pos.top;
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      placeAt(box, ox + (e.clientX - sx), oy + (e.clientY - sy));
+    });
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.userSelect = '';
+      const st = loadUIState();
+      st.left = parseFloat(box.style.left);
+      st.top = parseFloat(box.style.top);
+      saveUIState(st);
+    });
+  }
+
   function buildUI() {
     const box = document.createElement('div');
     box.id = 'ctf2-dl-panel';
     box.style.cssText = [
-      'position:fixed', 'right:18px', 'bottom:18px', 'z-index:2147483647',
+      'position:fixed', 'z-index:2147483647',
       'background:rgba(20,24,34,.94)', 'color:#dbe7ff', 'border:1px solid #2a3b57',
-      'border-radius:12px', 'padding:12px 14px', 'font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif',
+      'border-radius:12px 0 0 12px', 'padding:10px 12px',
+      'font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif',
       'box-shadow:0 8px 28px rgba(0,0,0,.45)', 'width:262px', 'user-select:none',
+      'backdrop-filter:blur(6px)', 'transition:box-shadow .15s',
     ].join(';');
 
     box.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <strong style="font-size:13px;">CTF² 附件下载</strong>
-        <span id="ctf2-dl-close" style="cursor:pointer;color:#8899b5;padding:0 4px;">✕</span>
+      <div id="ctf2-dl-head" style="display:flex;align-items:center;gap:6px;cursor:move;margin-bottom:8px;">
+        <span style="color:#61789a;font-size:12px;">⠿</span>
+        <strong style="font-size:13px;flex:1;white-space:nowrap;">CTF² 附件下载</strong>
+        <span id="ctf2-dl-collapse" title="展开/收起" style="cursor:pointer;color:#9db2d6;padding:0 5px;font-weight:700;">−</span>
+        <span id="ctf2-dl-close" title="关闭" style="cursor:pointer;color:#8899b5;padding:0 4px;">✕</span>
       </div>
-      <div id="ctf2-dl-dir" style="color:#9db2d6;margin-bottom:8px;font-size:12px;">目录：—</div>
-      <button id="ctf2-dl-pick" style="width:100%;margin-bottom:8px;padding:7px;border-radius:8px;border:1px solid #33507a;background:#1b2740;color:#dbe7ff;cursor:pointer;">选择保存目录…</button>
-      <button id="ctf2-dl-run" style="width:100%;padding:9px;border-radius:8px;border:none;background:linear-gradient(90deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer;">⬇ 下载当前题目附件</button>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#9db2d6;cursor:pointer;">
-        <input type="checkbox" id="ctf2-dl-wp" checked /> 同时生成 WP 模板（WP.md）
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:#9db2d6;cursor:pointer;">
-        <input type="checkbox" id="ctf2-dl-exp" checked /> PWN 题自动填 exp.py（nc 连接）
-      </label>
-      <div id="ctf2-dl-status" style="margin-top:8px;font-size:12px;min-height:16px;color:#cfe3ff;"></div>
-      <div style="margin-top:6px;font-size:11px;color:#6f83a3;"></div>
+      <div id="ctf2-dl-body">
+        <div id="ctf2-dl-dir" style="color:#9db2d6;margin-bottom:8px;font-size:12px;">目录：—</div>
+        <button id="ctf2-dl-pick" style="width:100%;margin-bottom:8px;padding:7px;border-radius:8px;border:1px solid #33507a;background:#1b2740;color:#dbe7ff;cursor:pointer;">选择保存目录…</button>
+        <button id="ctf2-dl-run" style="width:100%;padding:9px;border-radius:8px;border:none;background:linear-gradient(90deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer;">⬇ 下载当前题目附件</button>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#9db2d6;cursor:pointer;">
+          <input type="checkbox" id="ctf2-dl-wp" checked /> 同时生成 WP 模板（WP.md）
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:#9db2d6;cursor:pointer;">
+          <input type="checkbox" id="ctf2-dl-exp" checked /> PWN 题自动填 exp.py（nc 连接）
+        </label>
+        <div id="ctf2-dl-status" style="margin-top:8px;font-size:12px;min-height:16px;color:#cfe3ff;"></div>
+        <div id="ctf2-dl-hint" style="margin-top:6px;font-size:11px;color:#6f83a3;"></div>
+      </div>
     `;
     document.body.appendChild(box);
 
@@ -603,7 +670,7 @@
     if (!HAS_FS) {
       // Firefox / Safari 等不支持选择目录：隐藏按钮并给出说明
       pickBtn.style.display = 'none';
-      box.querySelector('div[style*="font-size:11px"]').textContent = NEED_FLAT
+      box.querySelector('#ctf2-dl-hint').textContent = NEED_FLAT
         ? 'Safari 不支持选目录：文件将平铺到默认下载目录，文件名带 分类_题目_ 前缀（多次自动下载需在站点设置里允许）。'
         : '当前浏览器不支持选目录，将保存到默认下载目录的 CTF2/分类/题目名/ 下。';
     }
@@ -615,6 +682,30 @@
     const expChk = box.querySelector('#ctf2-dl-exp');
     if (expChk) { expChk.checked = pwnExpEnabled; expChk.addEventListener('change', () => { pwnExpEnabled = expChk.checked; }); }
     box.querySelector('#ctf2-dl-close').addEventListener('click', () => box.remove());
+
+    box.querySelector('#ctf2-dl-collapse').addEventListener('click', () => {
+      const c = box.dataset.collapsed !== '1';
+      applyCollapsed(box, c);
+      const st = loadUIState(); st.collapsed = c; saveUIState(st);
+    });
+
+    // 恢复上次位置 / 收起状态，否则默认贴右侧中部
+    const st = loadUIState();
+    applyCollapsed(box, !!st.collapsed);
+    if (typeof st.left === 'number' && typeof st.top === 'number') {
+      placeAt(box, st.left, st.top);
+    } else {
+      dockRightMiddle(box);
+    }
+
+    makeDraggable(box, box.querySelector('#ctf2-dl-head'));
+
+    window.addEventListener('resize', () => {
+      if (box.style.left && box.style.left !== 'auto') {
+        placeAt(box, parseFloat(box.style.left) || 0, parseFloat(box.style.top) || 0);
+      }
+    });
+
     updateDirLabel();
   }
 
