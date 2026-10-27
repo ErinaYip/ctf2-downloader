@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CTF² 一键下载题目附件
 // @namespace    https://ctf2.dasctf.com/
-// @version      1.5.0
+// @version      1.6.0
 // @description  在 CTF²(ctf2.dasctf.com) 练习页打开题目后，一键下载该题所有附件。Chrome/Edge 可选本地目录（File System Access API）；Firefox 退回默认下载目录的子文件夹。使用页面自带登录态，无需绕过反爬。
 // @author       you
 // @match        https://ctf2.dasctf.com/*
@@ -410,6 +410,12 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
 
+  // Safari 等既无 FS 又无 GM_download：平铺下载，用前缀保留归类
+  const NEED_FLAT = !HAS_FS && !HAS_GM_DOWNLOAD;
+  function flatName(cat, title, name) {
+    return sanitize(`${cat}_${title}_${name}`);
+  }
+
   /* ---------------- 主流程 ---------------- */
   let busy = false;
   let wpEnabled = true;
@@ -468,7 +474,7 @@
             await gmDownload(url, relPrefix + name);
           } else {
             const blob = await fetchBlob(url);
-            anchorDownload(blob, name);
+            anchorDownload(blob, NEED_FLAT ? flatName(category, title, name) : name);
           }
           ok++;
         } catch (e) {
@@ -491,7 +497,7 @@
             await gmDownload('data:text/markdown;charset=utf-8,' + encodeURIComponent(md), relPrefix + wpName);
             wpDone = true;
           } else {
-            anchorDownload(new Blob([md], { type: 'text/markdown;charset=utf-8' }), wpName);
+            anchorDownload(new Blob([md], { type: 'text/markdown;charset=utf-8' }), NEED_FLAT ? flatName(category, title, wpName) : wpName);
             wpDone = true;
           }
         } catch (e) {
@@ -522,7 +528,7 @@
                 await gmDownload('data:text/x-python;charset=utf-8,' + encodeURIComponent(py), relPrefix + expName);
                 expDone = true;
               } else {
-                anchorDownload(new Blob([py], { type: 'text/x-python;charset=utf-8' }), expName);
+                anchorDownload(new Blob([py], { type: 'text/x-python;charset=utf-8' }), NEED_FLAT ? flatName(category, title, expName) : expName);
                 expDone = true;
               }
             }
@@ -535,7 +541,7 @@
       let where;
       if (dirHandle) where = `「${dirHandle.name}/${category}/${sanitize(title)}」`;
       else if (HAS_GM_DOWNLOAD) where = `默认下载目录下「${relPrefix}」`;
-      else where = '默认下载目录';
+      else where = NEED_FLAT ? '默认下载目录（文件名以 分类_题目_ 开头）' : '默认下载目录';
       setStatus(`完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ''}${wpDone ? '，已生成 WP.md' : ''}${expDone ? '，已生成 exp.py（含靶机 nc）' : ''} → ${where}`, fail ? 'warn' : 'ok');
     } catch (e) {
       console.error(e);
@@ -558,6 +564,7 @@
     if (dirHandle) dirLabelEl.textContent = `目录：${dirHandle.name}`;
     else if (HAS_FS) dirLabelEl.textContent = '目录：默认下载目录';
     else dirLabelEl.textContent = '目录：默认下载目录（将建 CTF2/题目名 子文件夹）';
+    if (NEED_FLAT) dirLabelEl.textContent = '目录：默认下载目录（Safari 不支持选目录，文件名加 分类_题目_ 前缀）';
   }
 
   function buildUI() {
@@ -594,10 +601,11 @@
 
     const pickBtn = box.querySelector('#ctf2-dl-pick');
     if (!HAS_FS) {
-      // Firefox 等不支持选择目录：隐藏按钮并给出说明
+      // Firefox / Safari 等不支持选择目录：隐藏按钮并给出说明
       pickBtn.style.display = 'none';
-      box.querySelector('div[style*="font-size:11px"]').textContent =
-        '当前浏览器不支持选目录，将保存到默认下载目录的 CTF2/题目名/ 下。';
+      box.querySelector('div[style*="font-size:11px"]').textContent = NEED_FLAT
+        ? 'Safari 不支持选目录：文件将平铺到默认下载目录，文件名带 分类_题目_ 前缀（多次自动下载需在站点设置里允许）。'
+        : '当前浏览器不支持选目录，将保存到默认下载目录的 CTF2/分类/题目名/ 下。';
     }
 
     pickBtn.addEventListener('click', () => { pickDir(); });
