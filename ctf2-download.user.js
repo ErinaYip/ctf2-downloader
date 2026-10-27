@@ -264,7 +264,7 @@
     const bin = (attachments && attachments[0]) || '';
     const header = [
       '#!/usr/bin/env python3',
-      '# -*- coding: utf-8 -*-',
+      '# noqa: EXE001',
       '# 题目：' + title + '  (' + (category || 'PWN') + ')',
       '# 靶机：' + host + ':' + port + (ssl ? '  (SSL)' : ''),
     ];
@@ -273,7 +273,7 @@
     }
     const body = [
       '',
-      'from pwn import *',
+      'from pwn import *  # pyright: ignore[reportWildcardImportFromLibrary]',
       '',
       "context.log_level = 'debug'",
       "context.arch = 'amd64'",
