@@ -140,7 +140,7 @@
 
   // 生成 WP 模板（Markdown）
   function buildWpTemplate(opts) {
-    const { title, category, difficulty, source, description, attachments } = opts;
+    const { title, category, difficulty, source, description, attachments, arch } = opts;
     const desc = (description || '').toString().trim() || '_（题目无描述）_';
     const atts = (attachments && attachments.length)
       ? attachments.map((n) => '- `' + n + '`').join('\n')
@@ -152,6 +152,7 @@
       '- **来源**：' + (source || '（未知）'),
       '- **方向**：' + (category || '-'),
       '- **难度**：' + (difficulty || '-'),
+      ...(arch ? ['- **架构**：' + arch] : []),
       '- **日期**：' + new Date().toISOString().slice(0, 10),
       '',
       '## 题目描述',
@@ -517,13 +518,23 @@
         }
       }
 
+      // 下载已完成，直接读本地文件头探测架构（供 WP / exp 复用）；探测失败则为 null，不写
+      let arch = null;
+      if (files.length) {
+        setStatus('探测附件架构…', 'info');
+        try {
+          if (firstBlob) arch = await probeArchFromBlob(firstBlob);
+          if (!arch && targetDir) arch = await probeArchFromDir(targetDir, firstBlobName || attachmentNames[0]);
+        } catch (e) { arch = null; }
+      }
+
       // 自动生成 WP 模板
       let wpDone = false;
       if (wpEnabled) {
         setStatus('生成 WP 模板…', 'info');
         try {
           const source = await getPracticeName(pid);
-          const md = buildWpTemplate({ title, category, difficulty, source, description, attachments: attachmentNames });
+          const md = buildWpTemplate({ title, category, difficulty, source, description, attachments: attachmentNames, arch });
           const wpName = 'WP.md';
           if (targetDir) {
             await writeToDir(targetDir, wpName, new Blob([md], { type: 'text/markdown;charset=utf-8' }));
@@ -554,13 +565,7 @@
               const ssh = (chosen.ssh_host && chosen.ssh_port)
                 ? { host: chosen.ssh_host, port: chosen.ssh_port, user: chosen.ssh_username || 'root', pass: chosen.ssh_password || '' }
                 : null;
-              // 下载已完成，直接读本地文件头探测架构：优先用已下载的 blob，其次读回目录里的文件
-              let arch = null;
-              setStatus('探测附件架构…', 'info');
-              try {
-                if (firstBlob) arch = await probeArchFromBlob(firstBlob);
-                if (!arch && targetDir) arch = await probeArchFromDir(targetDir, firstBlobName || attachmentNames[0]);
-              } catch (e) { arch = null; }
+              // 复用已探测的架构（下载后已解析）
               const py = buildExpPy({ title, category, host: hp.host, port: hp.port, ssl, ssh, attachments: attachmentNames, arch });
               const expName = 'exp.py';
               if (targetDir) {
