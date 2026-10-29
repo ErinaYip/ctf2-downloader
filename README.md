@@ -10,6 +10,7 @@ A Tampermonkey userscript for [CTF²](https://ctf2.dasctf.com) (DASCTF) practice
 
 - **One-click download / 一键下载** — Grabs all attachments of the currently opened challenge.
 - **Organized folders / 目录自动归类** — Files go to `<chosen dir>/<Category>/<Challenge>/<File>`.
+- **No overwrite / 不覆盖旧内容** — If `<Challenge>` (or its subfolder in the `GM_download` fallback) already exists, a new folder `Challenge (1)`, `Challenge (2)`… is created instead of writing into the old one.
 - **WP template / 题解模板** — Generates `WP.md` pre-filled with challenge name, source, category, difficulty and description.
 - **PWN exp.py / PWN 脚本** — If the challenge is PWN and its target is running, generates `exp.py` with `HOST`/`PORT` (and `ssl=True` when needed) already filled in.
 - **Uses your own session / 复用登录态** — Calls the site's own same-origin APIs with your existing JWT (`localStorage.token`). No anti-bot bypass, no scraping tricks.
@@ -56,14 +57,14 @@ Resulting layout (Chrome/Edge):
 | Generate `WP.md` / `exp.py` | ✅ | ✅ | ✅ |
 | Batch auto-download | ✅ | ✅ | ⚠️ limited |
 
-- **Chrome / Edge**: uses the File System Access API (`showDirectoryPicker`) to write into any folder you choose.
-- **Firefox**: no directory picker; downloads go to `Downloads/CTF2/<Category>/<Challenge>/` via `GM_download`.
+- **Chrome / Edge**: uses the File System Access API (`showDirectoryPicker`) to write into any folder you choose. If the challenge folder already exists, a new `Challenge (n)` folder is created instead of overwriting it.
+- **Firefox**: no directory picker; downloads go to `Downloads/CTF2/<Category>/<Challenge>/` via `GM_download`. Re-downloading the same challenge uses `Challenge (n)` (tracked in `localStorage`), so older files are kept.
 - **Safari**: no directory picker and no `GM_download`; files are downloaded flat with a `Category_Challenge_` filename prefix. Batch downloads may require allowing automatic downloads for the site.
 
 ---
 
-- **Chrome / Edge**：用 File System Access API 写入你选的任意目录。
-- **Firefox**：无目录选择，通过 `GM_download` 落到 `下载/CTF2/<分类>/<题目名>/`。
+- **Chrome / Edge**：用 File System Access API 写入你选的任意目录；若「题目名」目录已存在，会新建「题目名 (n)」目录，不覆盖之前下载的内容。
+- **Firefox**：无目录选择，通过 `GM_download` 落到 `下载/CTF2/<分类>/<题目名>/`；同一题重复下载会改用「题目名 (n)」目录（按本地记录推断），旧文件保留。
 - **Safari**：无目录选择、无 `GM_download`，文件平铺下载并以 `分类_题目名_` 作为文件名前缀；批量下载可能需要在站点设置里允许「自动下载」。
 
 ## 🔧 How it works / 原理

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CTF² 一键下载题目附件
 // @namespace    https://ctf2.dasctf.com/
-// @version      1.8.0
+// @version      1.9.0
 // @description  在 CTF²(ctf2.dasctf.com) 练习页打开题目后，一键下载该题所有附件。Chrome/Edge 可选本地目录（File System Access API）；Firefox 退回默认下载目录的子文件夹。使用页面自带登录态，无需绕过反爬。
 // @author       erina
 // @match        https://ctf2.dasctf.com/*
@@ -423,10 +423,37 @@
     return c ? c.toUpperCase() : 'OTHER';
   }
 
+  // 判断某个子目录是否已存在（不创建）；同名文件也会被视为“已占用”
+  async function dirExists(parent, name) {
+    try {
+      await parent.getDirectoryHandle(sanitize(name));
+      return true;
+    } catch (e) {
+      return !!(e && (e.name === 'TypeMismatchError' || e.name === 'InvalidModificationError'));
+    }
+  }
+
+  // 在 parent 下取一个不与已有目录冲突的名字：name → name (1) → name (2) …
+  async function uniqueDirName(parent, name) {
+    const base = sanitize(name);
+    if (!(await dirExists(parent, base))) return base;
+    for (let i = 1; i < 1000; i++) {
+      const cand = `${base} (${i})`;
+      if (!(await dirExists(parent, cand))) return cand;
+    }
+    return `${base} (${Date.now()})`;
+  }
+
   // 逐级创建子目录，返回最深层句柄
-  async function getNestedDir(root, segs) {
+  // opts.uniqueLast: 最底层目录若已存在则新建 "名字 (n)"，避免覆盖已有内容
+  async function getNestedDir(root, segs, opts) {
+    const uniqueLast = !!(opts && opts.uniqueLast);
     let d = root;
-    for (const s of segs) d = await d.getDirectoryHandle(sanitize(s), { create: true });
+    for (let i = 0; i < segs.length; i++) {
+      let name = sanitize(segs[i]);
+      if (uniqueLast && i === segs.length - 1) name = await uniqueDirName(d, name);
+      d = await d.getDirectoryHandle(name, { create: true });
+    }
     return d;
   }
 
@@ -435,6 +462,19 @@
     const w = await fh.createWritable();
     await w.write(blob);
     await w.close();
+  }
+
+  /* 无 FS 时无法探测磁盘，用 localStorage 记录已用过的目录名：
+     同一「分类/题目」第一次用 题目名，再次下载自动改用 题目名 (n)，避免旧产物被覆盖 */
+  const USED_DIRS_KEY = 'ctf2dl.usedDirs';
+  function nextRelDirName(category, title) {
+    let m = {};
+    try { m = JSON.parse(localStorage.getItem(USED_DIRS_KEY) || '{}') || {}; } catch (e) { m = {}; }
+    const key = sanitize(category) + '/' + sanitize(title);
+    const n = Number(m[key]) || 0;
+    m[key] = n + 1;
+    try { localStorage.setItem(USED_DIRS_KEY, JSON.stringify(m)); } catch (e) {}
+    return n === 0 ? sanitize(title) : `${sanitize(title)} (${n})`;
   }
 
   function anchorDownload(blob, name) {
@@ -487,12 +527,20 @@
       if (!files.length && !wpEnabled) { setStatus('该题目没有附件。', 'warn'); busy = false; return; }
 
       // 目录层级：选定目录 / 题目方向(分类) / 题目名 / 附件名
+      // 若「题目名」目录已存在，则新建「题目名 (n)」，避免覆盖之前下好的内容
       let targetDir = dirHandle;
+      let targetDirName = sanitize(title);
+      let dupDir = false;
       if (dirHandle) {
-        try { targetDir = await getNestedDir(dirHandle, [category, title]); } catch (e) { targetDir = dirHandle; }
+        try {
+          targetDir = await getNestedDir(dirHandle, [category, title], { uniqueLast: true });
+          targetDirName = targetDir.name;
+          dupDir = targetDirName !== sanitize(title);
+        } catch (e) { targetDir = dirHandle; }
       }
-      // Firefox 的 GM_download 相对子路径：CTF2/分类/题目名/
-      const relPrefix = `CTF2/${sanitize(category)}/${sanitize(title)}/`;
+      // Firefox 的 GM_download 相对子路径：CTF2/分类/题目名/（同名则新建 题目名 (n)）
+      const relDirName = HAS_GM_DOWNLOAD && !targetDir ? nextRelDirName(category, title) : sanitize(title);
+      const relPrefix = `CTF2/${sanitize(category)}/${relDirName}/`;
 
       let ok = 0, fail = 0;
       let firstBlob = null, firstBlobName = null;
@@ -588,10 +636,10 @@
       }
 
       let where;
-      if (dirHandle) where = `「${dirHandle.name}/${category}/${sanitize(title)}」`;
+      if (dirHandle) where = `「${dirHandle.name}/${sanitize(category)}/${targetDirName}」`;
       else if (HAS_GM_DOWNLOAD) where = `默认下载目录下「${relPrefix}」`;
       else where = NEED_FLAT ? '默认下载目录（文件名以 分类_题目_ 开头）' : '默认下载目录';
-      setStatus(`完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ''}${wpDone ? '，已生成 WP.md' : ''}${expDone ? '，已生成 exp.py（含靶机 nc）' : ''} → ${where}`, fail ? 'warn' : 'ok');
+      setStatus(`完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ''}${wpDone ? '，已生成 WP.md' : ''}${expDone ? '，已生成 exp.py（含靶机 nc）' : ''}${dupDir ? '（同名目录已存在，已新建子目录）' : ''} → ${where}`, fail ? 'warn' : 'ok');
     } catch (e) {
       console.error(e);
       setStatus('出错：' + (e.message || e), 'err');
