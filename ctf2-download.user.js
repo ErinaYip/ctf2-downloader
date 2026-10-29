@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CTF² 一键下载题目附件
 // @namespace    https://ctf2.dasctf.com/
-// @version      1.7.0
+// @version      1.8.0
 // @description  在 CTF²(ctf2.dasctf.com) 练习页打开题目后，一键下载该题所有附件。Chrome/Edge 可选本地目录（File System Access API）；Firefox 退回默认下载目录的子文件夹。使用页面自带登录态，无需绕过反爬。
-// @author       you
+// @author       erina
 // @match        https://ctf2.dasctf.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
@@ -276,14 +276,16 @@
       '',
       'from pwn import *  # pyright: ignore[reportWildcardImportFromLibrary]',
       '',
-      "context.log_level = 'debug'",
-      ...(arch ? ["context.arch = '" + arch + "'"] : []),
+      'context.log_level = "debug"',
+      ...(arch ? ['context.arch = "' + arch + '"'] : []),
       '',
-      "HOST = '" + host + "'",
+      'HOST = "' + host + '"',
       'PORT = ' + port,
       '',
       ssl ? 'io = remote(HOST, PORT, ssl=True)' : 'io = remote(HOST, PORT)',
-      bin ? "# elf = ELF('./" + bin + "')" : '# elf = ELF(\'./attachment\')',
+      bin ?
+        '# io = process("./' + bin + '")\n# elf = ELF("./' + bin + '")' :
+        '# io = process("./attachment")\n# elf = ELF("./attachment")',
       '',
       '# ---------------- exploit ----------------',
       '',
